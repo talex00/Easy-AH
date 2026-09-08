@@ -14,10 +14,14 @@ local search = require 'EasyAH.tabs.search'
 local item_listing = require 'EasyAH.gui.item_listing'
 local al = require 'EasyAH.gui.auction_listing'
 local gui = require 'EasyAH.gui'
+local safety = require 'EasyAH.core.safety'
+local batch, pending_post, pending_plan
+local market_scanning = false
+local latest_plan = {}
 
 local tab = EasyAH.tab 'Post'
 
-local settings_schema = {'tuple', '#', {duration='number'}, {start_price='number'}, {buyout_price='number'}, {hidden='boolean'}}
+local settings_schema = {'tuple', '#', {duration='number'}, {start_price='number'}, {buyout_price='number'}, {hidden='boolean'}, {post_all_stack_size='number'}}
 
 local scan_id, inventory_records, bid_records, buyout_records = 0, {}, {}, {}
 
@@ -29,7 +33,7 @@ refresh = true
 selected_item = nil
 
 function get_default_settings()
-	return T.map('duration', EasyAH.account_data.post_duration, 'start_price', 0, 'buyout_price', 0, 'hidden', false)
+	return T.map('duration', EasyAH.account_data.post_duration, 'start_price', 0, 'buyout_price', 0, 'hidden', false, 'post_all_stack_size', 0)
 end
 
 function EasyAH.handle.LOAD2()
@@ -38,7 +42,17 @@ end
 
 function read_settings(item_key)
 	item_key = item_key or selected_item.key
-	return data[item_key] and persistence.read(settings_schema, data[item_key]) or get_default_settings()
+	local settings
+    if data[item_key] then
+        local ok, value = pcall(persistence.read, settings_schema, data[item_key])
+        if ok then settings = value end
+    end
+    settings = settings or get_default_settings()
+    if not post.valid_duration(settings.duration) then settings.duration = EasyAH.account_data.post_duration end
+    if not safety.finite(settings.start_price) or settings.start_price < 0 then settings.start_price = 0 end
+    if not safety.finite(settings.buyout_price) or settings.buyout_price < 0 then settings.buyout_price = 0 end
+    if not safety.finite(settings.post_all_stack_size) or settings.post_all_stack_size < 0 or settings.post_all_stack_size ~= floor(settings.post_all_stack_size) then settings.post_all_stack_size = 0 end
+    return settings
 end
 function write_settings(settings, item_key)
 	item_key = item_key or selected_item.key
@@ -62,20 +76,26 @@ do
 end
 
 function refresh_button_click()
+    if batch or post.busy() or safety.busy() then return end
 	scan.abort(scan_id)
 	refresh_entries()
 	refresh = true
 end
 
 function tab.OPEN()
+    EasyAH.frame:SetHeight(600)
+    fit_post_window()
     frame:Show()
     update_inventory_records()
     refresh = true
 end
 
 function tab.CLOSE()
+    stop_all()
     selected_item = nil
     frame:Hide()
+    EasyAH.frame:SetHeight(447)
+    EasyAH.frame:SetScale(EasyAH.account_data.scale or 1)
 end
 
 function tab.USE_ITEM(item_info)
@@ -198,81 +218,71 @@ function price_update()
     end
 end
 
+local function item_details(record)
+    local ii = info.item(record.item_id, record.suffix_id)
+    if ii then ii.item_id = record.item_id end
+    return ii
+end
+local function start_confirmed(p, allow_low)
+    if not p or p.session ~= safety.session_id() or not safety.is_open() or GetTime() - p.created > 60 then
+        EasyAH.print('Confirmation expired; refresh and try again.'); return
+    end
+    post.start(p.key, p.size, p.duration, p.q.unit_bid, p.q.unit_buyout, p.count, function(posted, result, detail)
+        if result ~= 'success' then EasyAH.print('Posting stopped:', detail or result) end
+        if frame:IsShown() then update_inventory_records(); selected_item = nil; refresh = true end
+    end, {allow_low_profit=allow_low, expected=p.q})
+end
 StaticPopupDialogs.EASYAH_POST_LOW_PROFIT = {
-	text = 'Selling to a vendor would net more than this auction after fees and deposit. Post anyway?',
-	button1 = 'Post Anyway',
-	button2 = 'Cancel',
-	OnAccept = function() do_post_auctions() end,
-	timeout = 0,
-	whileDead = 1,
-	hideOnEscape = 1,
+    text = 'Starting bid or buyout is below the vendor safety floor. Post this confirmed lot configuration anyway?',
+    button1 = 'Post Anyway', button2 = 'Cancel', timeout = 0, whileDead = 1, hideOnEscape = 1,
+    OnAccept = function() local p = pending_post; pending_post = nil; start_confirmed(p, true) end,
+    OnCancel = function() pending_post = nil end,
 }
-
-function do_post_auctions()
-	if selected_item then
-        local unit_start_price = get_unit_start_price()
-        local unit_buyout_price = get_unit_buyout_price()
-        local stack_size = stack_size_slider:GetValue()
-        local stack_count
-        stack_count = stack_count_slider:GetValue()
-        local duration = UIDropDownMenu_GetSelectedValue(duration_dropdown)
-		local key = selected_item.key
-
-        local duration_code
-		if duration == DURATION_2 then
-            duration_code = 2
-		elseif duration == DURATION_8 then
-            duration_code = 3
-		elseif duration == DURATION_24 then
-            duration_code = 4
-		end
-
-		post.start(
-			key,
-			stack_size,
-			duration,
-            unit_start_price,
-            unit_buyout_price,
-			stack_count,
-			function(posted)
-				if not frame:IsShown() then
-					return
-				end
-				if unit_start_price > 0 then
-                    for i = 1, posted do
-                        record_auction(key, stack_size, unit_start_price, unit_buyout_price, duration_code, UnitName'player')
-                    end
-                end
-                update_inventory_records()
-				local same
-                for _, record in inventory_records do
-                    if record.key == key then
-	                    same = record
-	                    break
-                    end
-                end
-                if same then
-	                update_item(same)
-                else
-                    selected_item = nil
-                end
-                refresh = true
-			end
-		)
-	end
-end
-
 function post_auctions()
-	if low_profit then
-		StaticPopup_Show('EASYAH_POST_LOW_PROFIT')
-	else
-		do_post_auctions()
-	end
+    if not selected_item or market_scanning or batch or post.busy() or safety.busy() or safety.blocked() then return end
+    if price_input_invalid then EasyAH.print('Correct the price input first.'); return end
+    local size, count = stack_size_slider:GetValue(), stack_count_slider:GetValue()
+    local duration = UIDropDownMenu_GetSelectedValue(duration_dropdown)
+    if count < 1 then return end
+    local q, reason = post.quote(selected_item.key, item_details(selected_item), size, duration, get_unit_start_price(), get_unit_buyout_price())
+    if not q then EasyAH.print(post.reason_text(reason)); return end
+    local p = {key=selected_item.key, size=size, count=count, duration=duration, q=q, session=safety.session_id(), created=GetTime()}
+    if q.low_profit then pending_post = p; StaticPopup_Show('EASYAH_POST_LOW_PROFIT') else start_confirmed(p, false) end
 end
+function M.post_auctions_bind() post_auctions() end
+function M.stop_all()
+    batch, pending_plan, pending_post = nil, nil, nil
+    market_scanning = false
+    scan.abort(scan_id)
+    post.stop('Stopped by user')
+    safety.cancel('Stopped by user')
+    safety.disarm()
+    StaticPopup_Hide('EASYAH_POST_LOW_PROFIT')
+    StaticPopup_Hide('EASYAH_POST_ALL_CONFIRM')
+    refresh = true
+end
+function EasyAH.handle.CLOSE() stop_all() end
+function M.show_plan()
 
-function M.post_auctions_bind()
-	post_auctions()
+    local tw = require 'EasyAH.gui.text_window'
+    local lines = {}
+    if getn(latest_plan) == 0 then tinsert(lines, 'No plan yet. Press Post All to prepare one; nothing is posted before confirmation.') end
+    local b = pending_plan or batch
+    if b then
+        tinsert(lines, {text=format('Lots: %d  Skipped: %d  Est. deposit: %s', b.lots or 0, b.skipped or 0, money.to_string(b.deposits or 0, nil, true, nil, true)), r=0.8, g=0.8, b=1})
+        tinsert(lines, '')
+    end
+    for _, line in ipairs(latest_plan) do
+        local is_skip = strsub(line, 1, 4) == 'SKIP'
+        if is_skip then
+            tinsert(lines, {text=line, r=1, g=0.4, b=0.4})
+        else
+            tinsert(lines, {text=line, r=0.4, g=0.9, b=0.4})
+        end
+    end
+    tw.show('EasyAHPlanWindow', 'Post All Plan', lines, 620, 440, show_plan)
 end
+function M.batch_busy() return batch ~= nil end
 
 function M.unhide_all()
 	if not data then return end
@@ -289,133 +299,134 @@ function M.unhide_all()
 	EasyAH.print('Unhid ' .. count .. ' item(s)')
 end
 
+StaticPopupDialogs.EASYAH_POST_ALL_CONFIRM = {
+    text = '%s', button1 = 'Post All', button2 = 'Cancel', timeout = 0, whileDead = 1, hideOnEscape = 1,
+    OnAccept = function()
+        local b = pending_plan
+        pending_plan = nil
+        if not b or batch ~= b or b.session ~= safety.session_id() or not safety.is_open() or GetTime() - b.ready_at > 60 then
+            stop_all(); EasyAH.print('Plan expired. Build a fresh plan.'); return
+        end
+        local i = 0
+        local function step()
+            if batch ~= b or not safety.is_open() then return end
+            i = i + 1
+            local p = b.plan[i]
+            if not p then
+                batch = nil
+                status_bar:set_text('Post All complete'); status_bar:update_status(1, 1)
+                update_inventory_records(); selected_item = nil; refresh = true
+                return
+            end
+            status_bar:set_text('Posting ' .. p.record.name .. '...')
+            status_bar:update_status((i - 1) / getn(b.plan), 0)
+            post.start(p.record.key, p.size, p.duration, p.q.unit_bid, p.q.unit_buyout, p.count,
+                function(posted, result, detail)
+                    if batch ~= b then return end
+                    if result ~= 'success' then
+                        batch = nil
+                        EasyAH.print('Post All stopped:', detail or result)
+                        status_bar:set_text('Post All stopped: ' .. tostring(detail or result))
+                        update_inventory_records(); selected_item = nil; refresh = true
+                        return
+                    end
+                    step()
+                end, {expected=p.q})
+        end
+        step()
+    end,
+    OnCancel = function() pending_plan = nil; batch = nil; refresh = true end,
+}
 function M.post_all()
-	if not frame:IsShown() or not data then return end
+    if not frame:IsShown() or not data or batch or post.busy() or safety.busy() or safety.blocked() or not safety.is_open() then return end
+    if commit_packaging and not commit_packaging() then return end
+    scan.abort(scan_id)
+    update_inventory_records()
 	local records = EasyAH.values(EasyAH.filter(EasyAH.copy(inventory_records), function(record)
 		return record.aux_quantity > 0 and not read_settings(record.key).hidden
 	end))
 	sort(records, function(a, b) return a.name < b.name end)
-	-- charge items (oils, scopes, etc.) can't be combined/split like normal stacks:
-	-- each existing charge-level group becomes its own listing.
-	local queue = {}
-	for _, record in records do
-		if record.max_charges then
-			for charge_size = record.max_charges, 1, -1 do
-				if (record.availability[charge_size] or 0) > 0 then
-					tinsert(queue, {record = record, charge_size = charge_size, count = record.availability[charge_size]})
-				end
-			end
-		else
-			-- Post full stacks AND the leftover partial stack, so nothing stays
-			-- in the bags (e.g. 36 items with max stack 10 = 3x10 + 1x6).
-			local qty = record.aux_quantity or 0
-			local ss = min(record.max_stack or 1, qty)
-			if ss >= 1 then
-				local full = floor(qty / ss)
-				if full > 0 then
-					tinsert(queue, {record = record, stack_size = ss, count = full})
-				end
-				local remainder = qty - full * ss
-				if remainder > 0 then
-					tinsert(queue, {record = record, stack_size = remainder, count = 1})
-				end
-			end
-		end
-	end
-	local total = getn(queue)
-	if total == 0 then
-		EasyAH.print('Post All: no auctionable items')
-		return
-	end
-	EasyAH.print('Post All: ' .. total .. ' listing(s)')
-	local i = 0
-	local last_scanned_key
-	local function step()
-		i = i + 1
-		local entry = queue[i]
-		if not entry then
-			status_bar:update_status(1, 1)
-			status_bar:set_text('Post All complete')
-			update_inventory_records()
-			refresh = true
-			return
-		end
-		local record = entry.record
-		local settings = read_settings(record.key)
-		local start_price = (EasyAH.account_data.remember_prices and settings.start_price) or 0
-		local buyout_price = (EasyAH.account_data.remember_prices and settings.buyout_price) or 0
-		local stack_size, count
-		if entry.charge_size then
-			stack_size = entry.charge_size
-			count = entry.count
-		elseif entry.stack_size then
-			stack_size = entry.stack_size
-			count = entry.count
-		else
-			stack_size = min(record.max_stack or 1, record.aux_quantity or 0)
-			count = floor((record.aux_quantity or 0) / stack_size)
-		end
-		if stack_size < 1 or not count or count < 1 then return step() end
-		local duration = settings.duration or EasyAH.account_data.post_duration
-		local duration_code = duration == DURATION_2 and 2 or duration == DURATION_8 and 3 or 4
-		local function post_entry()
-			status_bar:update_status(i / total, 0)
-			status_bar:set_text('Posting ' .. record.name .. '...')
-			post.start(record.key, stack_size, duration, start_price, buyout_price, count, function(posted)
-				if start_price > 0 then
-					for j = 1, posted do
-						record_auction(record.key, stack_size, start_price, buyout_price, duration_code, UnitName'player')
-					end
-				end
-				return step()
-			end)
-		end
-		-- Scan this item's live market once before posting it, so auto-price
-		-- undercuts the current floor instead of falling back to historical
-		-- value. Entries for the same item are adjacent in the queue, so we
-		-- only scan when the item changes. Skipped if prices are remembered.
-		if not EasyAH.account_data.remember_prices and record.key ~= last_scanned_key then
-			last_scanned_key = record.key
-			status_bar:update_status(i / total, 0)
-			status_bar:set_text('Scanning ' .. record.name .. '...')
-			local scan_floor, scan_count = nil, 0
-			scan_id = scan.start{
-				type = 'list',
-				ignore_owner = true,
-				queries = T.list(scan_util.item_query(record.item_id)),
-				on_auction = function(ar)
-					if ar.item_key == record.key and ar.unit_buyout_price and ar.unit_buyout_price > 0 and not info.is_player(ar.owner) then
-						scan_count = scan_count + 1
-						if not scan_floor or ar.unit_buyout_price < scan_floor then scan_floor = ar.unit_buyout_price end
-					end
-				end,
-				on_complete = function()
-					if scan_floor then history.set_market_value(record.key, scan_floor, scan_count) end
-					post_entry()
-				end,
-				on_abort = function()
-					status_bar:update_status(1, 1)
-					status_bar:set_text('Post All aborted')
-				end,
-			}
-		else
-			post_entry()
-		end
-	end
-	step()
+    local queue = require('EasyAH.core.packing').build(records, function(record) return read_settings(record.key).post_all_stack_size end)
+
+    if getn(queue) == 0 then EasyAH.print('No auctionable items.'); return end
+    safety.disarm()
+    latest_plan = {}
+    local b = {plan={}, session=safety.session_id(), deposits=0, lots=0, skipped=0}
+    batch = b
+    local i, last_key = 0, nil
+    local function prepare()
+        if batch ~= b or not safety.is_open() then return end
+        i = i + 1
+        local e = queue[i]
+        if not e then
+            market_scanning = false
+            if getn(b.plan) == 0 then batch = nil; show_plan(); return end
+            b.ready_at = GetTime(); pending_plan = b
+            status_bar:set_text('Plan ready - confirm to post')
+            show_plan()
+            local text = format('%d auctions ready; %d groups skipped. Estimated deposit: %s. Prices are frozen. Details: Plan button. Confirm within 60 seconds.', b.lots, b.skipped, money.to_string(b.deposits, nil, true, nil, true))
+            StaticPopup_Show('EASYAH_POST_ALL_CONFIRM', text)
+            return
+        end
+        local r = e.record
+        local size, count = e.charge_size or e.stack_size, e.count
+        local settings = read_settings(r.key)
+        local duration = settings.duration or EasyAH.account_data.post_duration
+        local sp = EasyAH.account_data.remember_prices and settings.start_price or 0
+        local bp = EasyAH.account_data.remember_prices and settings.buyout_price or 0
+        local function price_entry()
+            if batch ~= b then return end
+            local q, reason = post.quote(r.key, item_details(r), size, duration, sp, bp)
+            if not q or q.low_profit then
+                b.skipped = b.skipped + 1
+                local text = 'SKIP ' .. r.name .. ': ' .. post.reason_text(reason or 'low_profit')
+                tinsert(latest_plan, text); safety.log('plan', 'skipped', text)
+            else
+                tinsert(b.plan, {record=r, size=size, count=count, duration=duration, q=q})
+                b.lots = b.lots + count
+                local physical_size = r.max_charges and 1 or size
+                b.deposits = b.deposits + floor((r.unit_vendor_price or 0) * physical_size * (history.context() == 'neutral' and .25 or .05) * duration / 120) * count
+                tinsert(latest_plan, r.name .. ' ' .. count .. ' x' .. size .. ' bid ' .. money.to_string(q.bid, nil, true, nil, true) .. ' buy ' .. money.to_string(q.buyout, nil, true, nil, true) .. ' [' .. q.source .. ']')
+            end
+            EasyAH.thread(prepare)
+        end
+        if r.key ~= last_key then
+            last_key = r.key
+            r.unit_vendor_price = unit_vendor_price(r.key)
+            if sp == 0 then
+                local q = scan_util.item_query(r.item_id)
+                if not q then b.skipped=b.skipped+1; tinsert(latest_plan, 'SKIP '..r.name..': item unavailable'); return EasyAH.thread(prepare) end
+                market_scanning = true
+                status_bar:set_text('Planning: scanning ' .. r.name)
+                status_bar:update_status((i - 1) / getn(queue), 0)
+                scan_id = scan.start{type='list', require_owner=true, market_item_keys={r.key}, queries={q},
+                    on_complete=function() market_scanning=false; price_entry() end,
+                    on_abort=function(reason)
+                        if batch ~= b then return end
+                        market_scanning=false; batch=nil
+                        EasyAH.print('Plan stopped:', reason or 'cancelled')
+                        status_bar:set_text('Plan stopped; refresh and try again')
+                    end}
+                return
+            end
+        end
+        price_entry()
+    end
+    prepare()
 end
 
 function validate_parameters()
+    if packaging_update_enabled then packaging_update_enabled() end
+    if post_all_button then
+        if batch or post.busy() or safety.busy() or safety.blocked() then post_all_button:Disable() else post_all_button:Enable() end
+    end
+    if market_scanning or batch or post.busy() or safety.busy() or safety.blocked() or price_input_invalid then post_button:Disable(); return end
     if not selected_item then
         post_button:Disable()
         return
     end
     if get_unit_buyout_price() > 0 and get_unit_start_price() > get_unit_buyout_price() then
         post_button:Disable()
-        return
-    end
-    if get_unit_start_price() == 0 then
-        post_button:Enable()
         return
     end
     if stack_count_slider:GetValue() == 0 then
@@ -442,6 +453,7 @@ function update_item_configuration()
         profit:Hide()
         duration_dropdown:Hide()
         hide_checkbox:Hide()
+        if packaging_panel then packaging_panel:Hide() end
     else
 		unit_start_price_input:Show()
         unit_buyout_price_input:Show()
@@ -451,6 +463,7 @@ function update_item_configuration()
         profit:Show()
         duration_dropdown:Show()
         hide_checkbox:Show()
+        if packaging_panel then packaging_panel:Show() end
 
         item.texture:SetTexture(selected_item.texture)
         item.name:SetText('[' .. selected_item.name .. ']')
@@ -468,66 +481,20 @@ function update_item_configuration()
         stack_count_slider.editbox:SetNumber(stack_count_slider:GetValue())
 
         do
-            local deposit_factor = (GetAuctionHouseDepositRate and GetAuctionHouseDepositRate() / 100) or (UnitFactionGroup'npc' and .05 or .25)
-            local duration_factor = UIDropDownMenu_GetSelectedValue(duration_dropdown) / 120
-            local stack_size, stack_count = selected_item.max_charges and 1 or stack_size_slider:GetValue(), stack_count_slider:GetValue()
-            local vp = selected_item.unit_vendor_price or 0
-            -- Round only once, at the very end. Rounding per-unit first (before
-            -- applying stack_count/duration) truncated cheap items to 0 deposit
-            -- even though the real total (e.g. 15c vendor x 5% x 8h) is 3c+.
-            local amount = floor(vp * deposit_factor * stack_size * stack_count * duration_factor)
-            deposit:SetText('Deposit: ' .. (selected_item.unit_vendor_price and money.to_string(amount, nil, nil, EasyAH.color.text.enabled) or '?'))
-            local cut = UnitFactionGroup'npc' and 0.05 or 0.15
-            local total_qty = stack_size * stack_count
-            local unit_buyout = get_unit_buyout_price()
-            local using_auto = get_unit_start_price() == 0
-            local auto_sp, auto_bp, auto_status
-            local similar_items_available
-            if using_auto then
-                local ii = info.item(selected_item.item_id, selected_item.suffix_id)
-                if ii then
-                    auto_sp, auto_bp, auto_status = post.auto_price(selected_item.key, selected_item.item_id, ii.slot, ii.quality, ii.level, unit_buyout)
-                    similar_items_available = auto_status == 'review_thin_market' and similar_items_query(ii)
-                end
-            end
+            local size, count = stack_size_slider:GetValue(), stack_count_slider:GetValue()
+            local duration = UIDropDownMenu_GetSelectedValue(duration_dropdown)
+            local q, reason = post.quote(selected_item.key, item_details(selected_item), size, duration, get_unit_start_price(), get_unit_buyout_price())
+            local physical_size = selected_item.max_charges and 1 or size
+            local estimated = floor((selected_item.unit_vendor_price or 0) * physical_size * (history.context() == 'neutral' and .25 or .05) * (duration or 1440) / 120) * count
+            deposit:SetText('Deposit ~ ' .. money.to_string(estimated, nil, true))
+            low_profit = q and q.low_profit or false
+            if q then
+                local net = q.buyout_net or q.bid_net
+                profit:SetText('Net: ' .. money.to_string(net * count, nil, true) .. '\n' .. (q.low_profit and 'Warning: below vendor floor' or ('Source: ' .. q.source)))
+            else profit:SetText(post.reason_text(reason)) end
             if similar_items_button then
-                if similar_items_available then similar_items_button:Show() else similar_items_button:Hide() end
+                if reason == 'review_thin_market' then similar_items_button:Show() else similar_items_button:Hide() end
             end
-            local effective_buyout = unit_buyout > 0 and unit_buyout or ((using_auto and not auto_status) and auto_bp or nil)
-            local net
-            if effective_buyout then
-                net = floor(effective_buyout * total_qty * (1 - cut)) - amount
-            end
-            local vendor_total = selected_item.unit_vendor_price and (selected_item.unit_vendor_price * total_qty)
-            low_profit = (net ~= nil and vendor_total ~= nil and net < vendor_total * (1 + (EasyAH.account_data.min_profit_margin or 0) / 100)) or false
-            local ptext = ''
-            if vendor_total then
-                ptext = 'Vendor: ' .. money.to_string(vendor_total, nil, nil, low_profit and EasyAH.color.orange or EasyAH.color.text.enabled)
-            end
-            if net then
-                if ptext ~= '' then ptext = ptext .. '  |  ' end
-                ptext = ptext .. 'Net if sold: ' .. money.to_string(net, nil, nil, low_profit and EasyAH.color.red or (net >= 0 and EasyAH.color.green or EasyAH.color.red))
-            end
-            if using_auto then
-                local a
-                if auto_status == 'disenchant' then
-                    a = 'Auto: ' .. EasyAH.color.orange('better to disenchant')
-                elseif auto_status == 'vendor' then
-                    a = 'Auto: bid ' .. money.to_string(EasyAH.round(auto_sp), nil, nil, EasyAH.color.orange) .. ' / buy ' .. money.to_string(EasyAH.round(auto_bp), nil, nil, EasyAH.color.orange) .. ' ' .. EasyAH.color.orange('(vendor better)')
-                elseif auto_status == 'insufficient' then
-                    a = 'Auto: ' .. EasyAH.color.red('no data')
-                elseif auto_status == 'review' then
-                    a = 'Auto: ' .. EasyAH.color.red('price looks off - review & post manually')
-                elseif auto_status == 'review_thin_market' then
-                    a = 'Auto: ' .. EasyAH.color.red('too few competing listings - review & post manually')
-                elseif auto_sp then
-                    a = 'Auto: bid ' .. money.to_string(EasyAH.round(auto_sp), nil, nil, EasyAH.color.green) .. ' / buy ' .. money.to_string(EasyAH.round(auto_bp), nil, nil, EasyAH.color.green)
-                end
-                if a then
-                    if ptext == '' then ptext = a else ptext = ptext .. '\n' .. a end
-                end
-            end
-            profit:SetText(ptext)
         end
 
         refresh_button:Enable()
@@ -549,7 +516,7 @@ function similar_items_query(item_info)
 	local quality_name = item_info.quality and _G['ITEM_QUALITY' .. item_info.quality .. '_DESC']
 	local query = strlower(item_info.class)
 	if item_info.subclass and item_info.subclass ~= '' then query = query .. '/' .. strlower(item_info.subclass) end
-	if item_info.slot and item_info.slot ~= '' then query = query .. '/' .. strlower(item_info.slot) end
+	if item_info.slot and item_info.slot ~= '' then query = query .. '/' .. strlower(_G[item_info.slot] or item_info.slot) end
 	query = query .. '/' .. min_level .. '/' .. max_level
 	if quality_name then query = query .. '/' .. strlower(quality_name) end
 	return query
@@ -568,17 +535,8 @@ function show_similar_items()
 end
 
 function undercut(record, stack_size, stack)
-    local price = ceil(record.unit_price * (stack and record.stack_size or stack_size))
-    if not record.own then
-	    local umode = EasyAH.account_data.undercut_mode or 'fixed'
-	    if umode == 'percent' then
-	        price = price - ceil(price * (EasyAH.account_data.undercut or 1) / 100)
-	    elseif umode ~= 'match' then
-	        price = price - (EasyAH.account_data.undercut or 1)
-	    end
-	    price = max(1, price)
-    end
-    return price / stack_size
+    local reference = record.unit_price * (stack and record.stack_size or stack_size)
+    return post.undercut(reference / stack_size, stack_size, record.own)
 end
 
 function quantity_update(maximize_count)
@@ -593,6 +551,7 @@ function quantity_update(maximize_count)
 end
 
 function unit_vendor_price(item_key)
+    if safety.busy() or post.busy() then return end
     if CursorHasItem() then return end
     for slot in info.inventory() do
 	    T.temp(slot)
@@ -607,6 +566,7 @@ function unit_vendor_price(item_key)
                 ClickAuctionSellItemButton()
                 ClearCursor()
                 if auction_sell_item then
+                    EasyAH.account_data.merchant_sell[item_info.item_id] = auction_sell_item.vendor_price / (item_info.max_charges or auction_sell_item.count)
                     return auction_sell_item.vendor_price / auction_sell_item.count
                 end
             end
@@ -615,6 +575,10 @@ function unit_vendor_price(item_key)
 end
 
 function update_item(item)
+    if batch or post.busy() or safety.busy() then return end
+    if commit_packaging and not commit_packaging() then return end
+    price_input_invalid = false
+    unit_start_price_input.invalid_price, unit_buyout_price_input.invalid_price = false, false
     local settings = read_settings(item.key)
 
     item.unit_vendor_price = unit_vendor_price(item.key)
@@ -634,6 +598,7 @@ function update_item(item)
     UIDropDownMenu_SetSelectedValue(duration_dropdown, settings.duration)
 
     hide_checkbox:SetChecked(settings.hidden)
+    if load_packaging then load_packaging(item) end
 	
 	local ii = 1
 	if selected_item.max_charges then
@@ -714,16 +679,19 @@ end
 function refresh_entries()
 	if selected_item then
         local item_key = selected_item.key
+        market_scanning = true
 		set_bid_selection()
         set_buyout_selection()
         bid_records[item_key], buyout_records[item_key] = nil, nil
         local query = scan_util.item_query(selected_item.item_id)
+        if not query then market_scanning = false; return end
         status_bar:update_status(0, 0)
         status_bar:set_text('Scanning auctions...')
 
 		scan_id = scan.start{
             type = 'list',
-            ignore_owner = true,
+            require_owner = true,
+            market_item_keys = {item_key},
 			queries = T.list(query),
 			on_page_loaded = function(page, total_pages)
                 status_bar:update_status(page / total_pages, 0) -- TODO
@@ -742,6 +710,7 @@ function refresh_entries()
 				end
 			end,
 			on_abort = function()
+                    market_scanning = false
 				bid_records[item_key], buyout_records[item_key] = nil, nil
                 status_bar:update_status(1, 1)
                 status_bar:set_text('Scan aborted')
@@ -749,18 +718,7 @@ function refresh_entries()
 			on_complete = function()
 				bid_records[item_key] = bid_records[item_key] or T.acquire()
 				buyout_records[item_key] = buyout_records[item_key] or T.acquire()
-				-- Set the market floor directly from the scanned lots the user sees
-				-- (excluding our own), so auto-price always undercuts the visible floor.
-				local floor, count = nil, 0
-				for _, r in buyout_records[item_key] do
-					if not r.own then
-						count = count + 1
-						if not floor or r.unit_price < floor then
-							floor = r.unit_price
-						end
-					end
-				end
-				if floor then history.set_market_value(item_key, floor, count) end
+				market_scanning = false
                 refresh = true
                 status_bar:update_status(1, 1)
                 status_bar:set_text('Scan complete')
@@ -802,6 +760,7 @@ function record_auction(key, aux_quantity, unit_blizzard_bid, unit_buyout_price,
 end
 
 function on_update()
+    fit_post_window()
     if refresh then
         refresh = false
         price_update()

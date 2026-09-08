@@ -1,6 +1,7 @@
 ## Interface: 11200
 ## OptionalDeps: ShaguTweaks
 ## Title: EasyAH
+## Version: 1.12.1-fix5
 ## Notes: A clean, modern Auction House replacement
 ## SavedVariables: EasyAH
 
@@ -11,11 +12,14 @@ EasyAH.lua
 util.lua
 control.lua
 color.lua
+gui\theme.lua
 gui\core.lua
 frame.lua
 util\persistence.lua
 util\sort.lua
 util\money.lua
+data\vendor_prices.lua
+core\safety.lua
 core\cache.lua
 util\info.lua
 core\history.lua
@@ -27,12 +31,14 @@ core\scan.lua
 util\scan.lua
 core\stack.lua
 core\post.lua
+core\packing.lua
 core\tooltip.lua
 core\shortcut.lua
 
 gui\listing.lua
 gui\auction_listing.lua
 gui\item_listing.lua
+gui\text_window.lua
 
 tabs\search\core.lua
 tabs\search\results.lua
@@ -42,6 +48,7 @@ tabs\search\frame.lua
 
 tabs\post\core.lua
 tabs\post\frame.lua
+tabs\post\packaging.lua
 
 tabs\auctions\core.lua
 tabs\auctions\frame.lua
@@ -53,5 +60,6 @@ tabs\settings\core.lua
 core\crafting.lua
 
 localization.lua
+core\migration.lua
 
 

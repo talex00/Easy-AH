@@ -24,17 +24,17 @@ frame.inventory:SetPoint('TOPLEFT', 0, 0)
 frame.inventory:SetPoint('BOTTOMLEFT', 0, 0)
 
 frame.parameters = gui.panel(frame.content)
-frame.parameters:SetHeight(173)
+frame.parameters:SetHeight(302)
 frame.parameters:SetPoint('TOPLEFT', frame.inventory, 'TOPRIGHT', 2.5, 0)
 frame.parameters:SetPoint('TOPRIGHT', 0, 0)
 
 frame.bid_listing = gui.panel(frame.content)
-frame.bid_listing:SetHeight(228)
+frame.bid_listing:SetPoint('TOPLEFT', frame.parameters, 'BOTTOMLEFT', 0, -8)
 frame.bid_listing:SetWidth(271.5)
 frame.bid_listing:SetPoint('BOTTOMLEFT', frame.inventory, 'BOTTOMRIGHT', 2.5, 0)
 
 frame.buyout_listing = gui.panel(frame.content)
-frame.buyout_listing:SetHeight(228)
+frame.buyout_listing:SetPoint('TOPRIGHT', frame.parameters, 'BOTTOMRIGHT', 0, -8)
 frame.buyout_listing:SetWidth(271.5)
 frame.buyout_listing:SetPoint('BOTTOMRIGHT', 0, 0)
 
@@ -55,7 +55,7 @@ gui.horizontal_line(frame.inventory, -45)
 do
 	local f = CreateFrame('Frame', nil, frame.inventory)
 	f:SetPoint('TOPLEFT', 0, -51)
-	f:SetPoint('BOTTOMRIGHT', 0, 0)
+	f:SetPoint('BOTTOMRIGHT', 0, 40)
 	inventory_listing = item_listing.new(
 		f,
 	    function()
@@ -125,7 +125,7 @@ do
 	status_bar = gui.status_bar(frame)
     status_bar:SetWidth(265)
     status_bar:SetHeight(25)
-    status_bar:SetPoint('TOPLEFT', EasyAH.frame.content, 'BOTTOMLEFT', 0, -6)
+    status_bar:SetPoint('TOPLEFT', EasyAH.frame.content, 'BOTTOMLEFT', 8, -6)
     status_bar:update_status(1, 1)
     status_bar:set_text('')
 end
@@ -153,7 +153,9 @@ do
 end
 do
 	item = gui.item(frame.parameters)
-    item:SetPoint('TOPLEFT', 10, -6)
+    item:SetWidth(304)
+    item.name:SetHeight(20)
+    item:SetPoint('TOPLEFT', 10, -8)
     item.button:SetScript('OnEnter', function()
         if selected_item then
             info.set_tooltip(selected_item.itemstring, this, 'ANCHOR_RIGHT')
@@ -166,8 +168,8 @@ end
 do
     local slider = gui.slider(frame.parameters)
     slider:SetValueStep(1)
-    slider:SetPoint('TOPLEFT', 13, -73)
-    slider:SetWidth(190)
+    slider:SetPoint('TOPLEFT', 14, -80)
+    slider:SetWidth(165)
     slider:SetScript('OnValueChanged', function()
         quantity_update(true)
     end)
@@ -196,8 +198,8 @@ end
 do
     local slider = gui.slider(frame.parameters)
     slider:SetValueStep(1)
-    slider:SetPoint('TOPLEFT', stack_size_slider, 'BOTTOMLEFT', 0, -32)
-    slider:SetWidth(190)
+    slider:SetPoint('TOPLEFT', frame.parameters, 'TOPLEFT', 14, -126)
+    slider:SetWidth(165)
     slider:SetScript('OnValueChanged', function()
         quantity_update()
     end)
@@ -218,8 +220,9 @@ do
 end
 do
     local dropdown = gui.dropdown(frame.parameters)
-    dropdown:SetPoint('TOPLEFT', stack_count_slider, 'BOTTOMLEFT', 0, -22)
-    dropdown:SetWidth(90)
+    dropdown:SetPoint('TOPLEFT', frame.parameters, 'TOPLEFT', 14, -164)
+    dropdown:SetWidth(118)
+    dropdown:SetHeight(28)
     local label = gui.label(dropdown, gui.font_size.small)
     label:SetPoint('BOTTOMLEFT', dropdown, 'TOPLEFT', -2, -3)
     label:SetText('Duration')
@@ -230,8 +233,8 @@ do
     duration_dropdown = dropdown
 end
 do
-    local checkbox = gui.checkbox(frame.parameters)
-    checkbox:SetPoint('TOPRIGHT', -83, -6)
+    local checkbox = gui.checkbox(frame.inventory)
+    checkbox:SetPoint('BOTTOMLEFT', 16, 12)
     checkbox:SetScript('OnClick', function()
         local settings = read_settings()
         settings.hidden = this:GetChecked()
@@ -245,9 +248,9 @@ do
 end
 do
     local editbox = gui.editbox(frame.parameters)
-    editbox:SetPoint('TOPRIGHT', -71, -60)
-    editbox:SetWidth(180)
-    editbox:SetHeight(22)
+    editbox:SetPoint('TOPLEFT', frame.parameters, 'TOPLEFT', 284, -72)
+    editbox:SetWidth(184)
+    editbox:SetHeight(24)
     editbox:SetAlignment('RIGHT')
     editbox:SetFontSize(17)
     editbox:SetScript('OnTabPressed', function()
@@ -258,10 +261,18 @@ do
 	    end
     end)
     editbox.formatter = function() return money.to_string(get_unit_start_price(), true) end
-    editbox.char = function() set_bid_selection(); set_buyout_selection(); set_unit_start_price(money.from_string(this:GetText())) end
+    editbox.char = function()
+        local value = money.from_string(this:GetText())
+        this.invalid_price = value == nil
+        price_input_invalid = unit_start_price_input.invalid_price or unit_buyout_price_input.invalid_price
+        if value then set_bid_selection(); set_buyout_selection(); set_unit_start_price(value) end
+        refresh = true
+    end
     editbox.change = function() refresh = true end
     editbox.enter = function() this:ClearFocus() end
     editbox.focus_loss = function()
+        this.invalid_price = false
+        price_input_invalid = unit_start_price_input.invalid_price or unit_buyout_price_input.invalid_price
 	    this:SetText(money.to_string(get_unit_start_price(), true, nil, nil, true))
     end
     do
@@ -280,9 +291,9 @@ do
 end
 do
     local editbox = gui.editbox(frame.parameters)
-    editbox:SetPoint('TOPRIGHT', unit_start_price_input, 'BOTTOMRIGHT', 0, -19)
-    editbox:SetWidth(180)
-    editbox:SetHeight(22)
+    editbox:SetPoint('TOPLEFT', frame.parameters, 'TOPLEFT', 284, -124)
+    editbox:SetWidth(184)
+    editbox:SetHeight(24)
     editbox:SetAlignment('RIGHT')
     editbox:SetFontSize(17)
     editbox:SetScript('OnTabPressed', function()
@@ -293,10 +304,18 @@ do
         end
     end)
     editbox.formatter = function() return money.to_string(get_unit_buyout_price(), true) end
-    editbox.char = function() set_buyout_selection(); set_unit_buyout_price(money.from_string(this:GetText())) end
+    editbox.char = function()
+        local value = money.from_string(this:GetText())
+        this.invalid_price = value == nil
+        price_input_invalid = unit_start_price_input.invalid_price or unit_buyout_price_input.invalid_price
+        if value then set_buyout_selection(); set_unit_buyout_price(value) end
+        refresh = true
+    end
     editbox.change = function() refresh = true end
     editbox.enter = function() this:ClearFocus() end
     editbox.focus_loss = function()
+        this.invalid_price = false
+        price_input_invalid = unit_start_price_input.invalid_price or unit_buyout_price_input.invalid_price
 	    this:SetText(money.to_string(get_unit_buyout_price(), true, nil, nil, true))
     end
     do
@@ -315,21 +334,25 @@ do
 end
 do
 	local label = gui.label(frame.parameters, gui.font_size.medium)
-	label:SetPoint('LEFT', post_all_button, 'RIGHT', 15, 0)
+	label:SetPoint('TOPLEFT', frame.parameters, 'TOPLEFT', 14, -198)
+    label:SetWidth(248); label:SetHeight(16)
 	label:SetJustifyH('LEFT')
 	deposit = label
 end
 
 do
 	local label = gui.label(frame.parameters, gui.font_size.medium)
-	label:SetPoint('TOPLEFT', unit_buyout_price_input, 'BOTTOMLEFT', 0, -24)
+	label:SetPoint('TOPLEFT', frame.parameters, 'TOPLEFT', 284, -160)
+    label:SetWidth(242); label:SetHeight(30)
+    label:SetFont(gui.font, 13)
 	label:SetJustifyH('LEFT')
 	profit = label
 end
 
 do
 	local btn = gui.button(frame.parameters)
-	btn:SetPoint('TOPLEFT', profit, 'BOTTOMLEFT', 0, -6)
+	btn:SetPoint('TOPLEFT', frame.parameters, 'TOPLEFT', 284, -194)
+    btn:SetWidth(124); btn:SetHeight(22)
 	btn:SetText('Similar Items')
 	btn:SetScript('OnClick', show_similar_items)
 	btn:Hide()
@@ -348,4 +371,11 @@ function EasyAH.handle.LOAD()
 			{name='% Hist. Value', width=.15, align='CENTER'},
 		}
 	end
+end
+do
+    local btn = gui.button(frame.parameters, gui.font_size.small)
+    btn:SetPoint('LEFT', post_all_button, 'RIGHT', 5, 0)
+    btn:SetWidth(62); btn:SetHeight(24)
+    btn:SetText('Stop')
+    btn:SetScript('OnClick', function() EasyAH.stop_all() end)
 end

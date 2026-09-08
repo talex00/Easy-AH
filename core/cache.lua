@@ -39,11 +39,11 @@ do
 	function EasyAH.handle.LOAD()
 		characters = EasyAH.realm_data.characters
 		for k, v in characters do
-			if GetTime() > v + 60 * 60 * 24 * 30 then
+			if type(v) ~= 'number' or time() > v + 60 * 60 * 24 * 30 then
 				characters[k] = nil
 			end
 		end
-		characters[UnitName'player'] = GetTime()
+		characters[UnitName'player'] = time()
 	end
 end
 
@@ -90,6 +90,55 @@ function M.merchant_info(item_id)
 		buy_info = persistence.read(merchant_buy_schema, EasyAH.account_data.merchant_buy[item_id])
 	end
 	return EasyAH.account_data.merchant_sell[item_id], buy_info and buy_info.unit_price, buy_info and buy_info.limited
+end
+
+-- Vendor sell price used by the tooltip, anywhere in the world.
+--
+-- The 1.12.1 client never exposes an item's vendor price to addons, so the only
+-- prices EasyAH can know are the ones it recorded itself: bag items scanned
+-- while a merchant window was open, and items placed into the auction sell
+-- slot. EasyAH also ships a built-in vanilla price database
+-- (data/vendor_prices.lua) as a fallback, so that even items the player never
+-- carried are priced out of the box; the ShaguTweaks database is consulted too
+-- when that addon is installed.
+--
+-- Returns the unit price plus a flag telling whether it came from such an
+-- external database instead of our own observations.
+local external_price_databases = {
+	function() return ShaguTweaks and ShaguTweaks.SellValueDB end,
+	function() return EasyAH_VendorPriceDB end,
+}
+
+function M.vendor_sell_price(item_id)
+	if not item_id or item_id == 0 then return end
+
+	local own_price = EasyAH.account_data.merchant_sell[item_id]
+	if type(own_price) == 'number' and own_price >= 0 then return own_price, false end
+
+	-- Charge items (oils, gadgets) are listed at the price for all charges in
+	-- external databases, matching how the game itself reports them.
+	local charges = max_item_charges(item_id) or 1
+	for _, get_database in ipairs(external_price_databases) do
+		local database = get_database()
+		if type(database) == 'table' then
+			local price = tonumber(database[item_id])
+			if price and price > 0 then
+				return price / charges, true
+			end
+		end
+	end
+end
+
+-- How many items we currently hold a vendor sell / buy price for.
+local function table_size(t)
+	local n = 0
+	for _ in pairs(t) do n = n + 1 end
+	return n
+end
+
+function M.vendor_price_count()
+	local db_count = type(EasyAH_VendorPriceDB) == 'table' and table_size(EasyAH_VendorPriceDB) or 0
+	return table_size(EasyAH.account_data.merchant_sell), table_size(EasyAH.account_data.merchant_buy), db_count
 end
 
 function M.item_info(item_id)
@@ -166,7 +215,7 @@ function scan_wdb(item_id)
 	item_id = item_id or MIN_ITEM_ID
 
 	local processed = 0
-	while processed <= 100 and item_id <= MAX_ITEM_ID do
+	while processed < 100 and item_id <= MAX_ITEM_ID do
 		local itemstring = 'item:' .. item_id
 		local name, _, quality, level, class, subclass, max_stack, slot, texture = GetItemInfo(itemstring)
 		if name and not EasyAH.account_data.item_ids[strlower(name)] then
@@ -185,8 +234,8 @@ function scan_wdb(item_id)
 			if auctionable(tooltip, quality) then
 				tinsert(EasyAH.account_data.auctionable_items, strlower(name))
 			end
-			processed = processed + 1
 		end
+		processed = processed + 1
 		item_id = item_id + 1
 	end
 
@@ -208,4 +257,10 @@ function M.populate_wdb(item_id)
 		EasyAHTooltip:SetHyperlink('item:' .. item_id)
 	end
 	EasyAH.thread(populate_wdb, item_id + 1)
+end
+function M.rebuild_cache()
+    EasyAH.account_data.items = {}
+    EasyAH.account_data.item_ids = {}
+    EasyAH.account_data.auctionable_items = {}
+    scan_wdb()
 end

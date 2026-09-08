@@ -76,17 +76,33 @@ local function slider_row(panel, x, y, labeltext, lo, hi, step, get, set, allow_
 	s:SetMinMaxValues(lo, hi)
 	s.label:SetText(labeltext)
 	s.editbox:SetNumeric(not allow_decimal)
-	s:SetScript('OnValueChanged', function()
-		set(this:GetValue())
-		s.editbox:SetNumber(this:GetValue())
-	end)
-	s.editbox.change = function()
-		s:SetValue(this:GetNumber())
-	end
-	tinsert(refreshers, function()
-		s:SetValue(get())
-		s.editbox:SetNumber(get())
-	end)
+    local updating = false
+    local function show_value(v)
+        if allow_decimal then s.editbox:SetText(format('%.2f', v)) else s.editbox:SetNumber(v) end
+    end
+    s:SetScript('OnValueChanged', function()
+        if updating then return end
+        updating = true
+        local v = max(lo, min(hi, this:GetValue()))
+        set(v); show_value(v)
+        updating = false
+    end)
+    s.editbox.change = function()
+        if updating then return end
+        local v = tonumber(s.editbox:GetText())
+        if v and v == v then
+            updating = true
+            v = max(lo, min(hi, v))
+            s:SetValue(v); set(s:GetValue())
+            updating = false
+        end
+    end
+    tinsert(refreshers, function()
+        updating = true
+        local v = max(lo, min(hi, tonumber(get()) or lo))
+        s:SetValue(v); show_value(v)
+        updating = false
+    end)
 end
 
 local function button_row(panel, x, y, text, width, onclick)
@@ -138,7 +154,7 @@ do
 	end
 	do
 		local btn = gui.button(frame)
-		btn:SetPoint('TOPRIGHT', -8, -8)
+		btn:SetPoint('TOPRIGHT', -12, -14)
 		gui.set_size(btn, 60, 24)
 		btn:SetText('Close')
 		btn:SetScript('OnClick', function() frame:Hide() end)
@@ -198,14 +214,44 @@ do
 	checkbox_row(frame.col1, 15, -262, 'Disenchant value distribution',
 		function() return EasyAH.character_data.tooltip.disenchant_distribution end,
 		function(v) EasyAH.character_data.tooltip.disenchant_distribution = v end)
-	checkbox_row(frame.col1, 15, -286, 'Vendor sell price',
+
+	section(frame.col1, -298, 'Vendor price (shown anywhere in the world)')
+	checkbox_row(frame.col1, 15, -322, 'Show vendor sell price on item tooltips',
 		function() return EasyAH.character_data.tooltip.merchant_sell end,
 		function(v) EasyAH.character_data.tooltip.merchant_sell = v end)
-	checkbox_row(frame.col1, 15, -310, 'Vendor buy price',
+	checkbox_row(frame.col1, 15, -346, 'Show vendor buy price on item tooltips',
 		function() return EasyAH.character_data.tooltip.merchant_buy end,
 		function(v) EasyAH.character_data.tooltip.merchant_buy = v end)
+	checkbox_row(frame.col1, 15, -370, 'Add stack total next to the unit price',
+		function() return EasyAH.character_data.tooltip.merchant_stack end,
+		function(v) EasyAH.character_data.tooltip.merchant_stack = v end)
+	checkbox_row(frame.col1, 15, -394, 'Mark unknown prices with a "?" line',
+		function() return EasyAH.character_data.tooltip.merchant_unknown end,
+		function(v) EasyAH.character_data.tooltip.merchant_unknown = v end)
+	do
+		local status = gui.label(frame.col1, gui.font_size.small)
+		status:SetPoint('TOPLEFT', 15, -420)
+		status:SetPoint('RIGHT', frame.col1, 'RIGHT', -12, 0)
+		status:SetJustifyH('LEFT')
+		tinsert(refreshers, function()
+			local sell_count, buy_count, db_count = info.vendor_price_count()
+			local text = format('Prices known: %d sell / %d buy', sell_count, buy_count)
+			if db_count > 0 then text = text .. format(' (+%d built-in)', db_count) end
+			status:SetText(EasyAH.color.text.disabled(text))
+		end)
+	end
+	do
+		local note = gui.label(frame.col1, gui.font_size.small)
+		note:SetPoint('TOPLEFT', 15, -440)
+		note:SetPoint('RIGHT', frame.col1, 'RIGHT', -12, 0)
+		note:SetJustifyH('LEFT')
+		-- Not present on every 1.12 client; the label wraps anyway because it
+		-- is anchored left and right, which gives it a width.
+		if note.SetWordWrap then note:SetWordWrap(true) end
+		note:SetText(EasyAH.color.text.disabled('The 1.12 client never sends vendor prices to addons. EasyAH learns them from your bags every time you open a vendor window, ships with a built-in vanilla price database covering items you never sold yet, and also reads the ShaguTweaks price database when that addon is installed.'))
+	end
 
-	slider_row(frame.col1, 15, -352, 'UI scale (%)', 50, 200, 5,
+	slider_row(frame.col1, 15, -510, 'UI scale (%)', 50, 200, 5,
 		function() return EasyAH.round((EasyAH.account_data.scale or 1) * 100) end,
 		function(v) EasyAH.account_data.scale = v / 100; EasyAH.frame:SetScale(v / 100) end)
 
@@ -247,9 +293,7 @@ do
 		post.unhide_all()
 	end)
 	button_row(frame.col2, 15, -404, 'Clear item cache', 220, function()
-		EasyAH.account_data.items = {}
-		EasyAH.account_data.item_ids = {}
-		EasyAH.account_data.auctionable_items = {}
+		info.rebuild_cache()
 		EasyAH.print('Item cache cleared.')
 	end)
 	button_row(frame.col2, 15, -434, 'Populate item database', 220, function()
@@ -264,12 +308,12 @@ do
 	end
 
 	local coefficients = {
-		{'value_buyout', 'No-competition buyout: x historical value', 0, 2, 0.01},
-		{'merchant_buy_buyout', 'Buyout vs. vendor buy price', 0, 3, 0.01},
-		{'vendor_base', 'Vendor multiplier: base', 0, 5, 0.01},
+		{'value_buyout', 'No-competition buyout: x historical value', 0.01, 2, 0.01},
+		{'merchant_buy_buyout', 'Buyout vs. vendor buy price', 0.01, 3, 0.01},
+		{'vendor_base', 'Vendor multiplier: base', 0.01, 5, 0.01},
 		{'vendor_amp', 'Vendor multiplier: amplitude', 0, 10, 0.01},
-		{'vendor_decay', 'Vendor multiplier: decay (copper)', 0, 10000, 50},
-		{'bid_vs_buyout', 'Bid as fraction of buyout', 0, 1, 0.01},
+		{'vendor_decay', 'Vendor multiplier: decay (copper)', 50, 10000, 50},
+		{'bid_vs_buyout', 'Bid as fraction of buyout', 0.01, 1, 0.01},
 		{'de_reco_factor', 'Disenchant recommendation: value factor', 0, 2, 0.01},
 		{'de_reco_flat', 'Disenchant recommendation: flat bonus (copper)', 0, 500, 5},
 		{'vendor_reco', 'Vendor recommendation threshold multiplier', 0, 5, 0.01},
@@ -297,7 +341,19 @@ do
 		note:SetPoint('TOPLEFT', 15, y - 36)
 		note:SetPoint('RIGHT', frame.col3, 'RIGHT', -12, 0)
 		note:SetJustifyH('LEFT')
-		note:SetWordWrap(true)
+		-- Not present on every 1.12 client; the label wraps anyway because it
+		-- is anchored left and right, which gives it a width.
+		if note.SetWordWrap then note:SetWordWrap(true) end
 		note:SetText(EasyAH.color.text.disabled('These control the auto-price heuristic used in Post when Unit Starting Price is 0.'))
 	end
+end
+
+
+do
+    local theme = require 'EasyAH.gui.theme'
+    local button = gui.button(frame, 13)
+    button:SetPoint('TOPRIGHT', -88, -14)
+    button:SetWidth(156); button:SetHeight(24)
+    button:SetScript('OnClick', function() theme.toggle() end)
+    button:SetScript('OnUpdate', function() button:SetText(theme.current() == 'classic' and 'Theme: Classic' or 'Theme: Modern') end)
 end

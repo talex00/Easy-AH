@@ -2,6 +2,7 @@ module 'EasyAH.gui'
 
 local T = require 'T'
 local EasyAH = require 'EasyAH'
+local theme = require 'EasyAH.gui.theme'
 
 M.font = [[Fonts\ARIALN.TTF]]
 
@@ -119,15 +120,15 @@ function M.set_frame_style(frame, backdrop_color, border_color, left, right, top
 end
 
 function M.set_window_style(frame, left, right, top, bottom)
-    set_frame_style(frame, EasyAH.color.window.background, EasyAH.color.window.border, left, right, top, bottom)
+    theme.style(frame, 'window', function() set_frame_style(frame, EasyAH.color.window.background, EasyAH.color.window.border, left, right, top, bottom) end)
 end
 
 function M.set_panel_style(frame, left, right, top, bottom)
-    set_frame_style(frame, EasyAH.color.panel.background, EasyAH.color.panel.border, left, right, top, bottom)
+    theme.style(frame, 'panel', function() set_frame_style(frame, EasyAH.color.panel.background, EasyAH.color.panel.border, left, right, top, bottom) end)
 end
 
 function M.set_content_style(frame, left, right, top, bottom)
-    set_frame_style(frame, EasyAH.color.content.background, EasyAH.color.content.border, left, right, top, bottom)
+    theme.style(frame, 'content', function() set_frame_style(frame, EasyAH.color.content.background, EasyAH.color.content.border, left, right, top, bottom) end)
 end
 
 function M.panel(parent)
@@ -166,7 +167,7 @@ function M.button(parent, text_height)
     button.highlight = highlight
     do
         local label = button:CreateFontString()
-        label:SetFont(font, text_height)
+        theme.font(label, text_height, true)
         label:SetAllPoints(button)
         label:SetJustifyH('CENTER')
         label:SetJustifyV('CENTER')
@@ -186,6 +187,7 @@ function M.button(parent, text_height)
         return self:default_Disable()
     end
 
+    theme.button(button)
     return button
 end
 
@@ -219,7 +221,7 @@ do
 		tab.text:SetAllPoints()
 		tab.text:SetJustifyH('CENTER')
 		tab.text:SetJustifyV('CENTER')
-		tab.text:SetFont(font, font_size.large)
+		theme.font(tab.text, font_size.large, true)
 		tab:SetFontString(tab.text)
 
 		tab:SetText(text)
@@ -437,8 +439,7 @@ end
 
 function M.label(parent, size)
     local label = parent:CreateFontString()
-    label:SetFont(font, size or font_size.small)
-    label:SetTextColor(EasyAH.color.label.enabled())
+    theme.font(label, size or font_size.small, true)
     return label
 end
 

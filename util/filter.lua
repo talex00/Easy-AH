@@ -185,17 +185,7 @@ M.filters = {
         input_type = 'money',
         validator = function(amount)
             return function(auction_record)
-                local vendor_price = info.merchant_info(auction_record.item_id)
-				if not vendor_price and ShaguTweaks then 
-				    vendor_price = ShaguTweaks.SellValueDB[auction_record.item_id]
-					if vendor_price then 
-						local charges = 1
-						if info.max_item_charges(auction_record.item_id) ~= nil then 
-							info.charges=info.max_item_charges(auction_record.item_id) 
-						end
-						vendor_price= vendor_price/ charges 
-					 end
-				end
+                local vendor_price = info.vendor_sell_price(auction_record.item_id)
                 return vendor_price and vendor_price * auction_record.aux_quantity - auction_record.bid_price >= amount
             end
         end
@@ -205,17 +195,7 @@ M.filters = {
         input_type = 'money',
         validator = function(amount)
             return function(auction_record)
-                local vendor_price = info.merchant_info(auction_record.item_id)
-				if not vendor_price and ShaguTweaks then 
-				    vendor_price = ShaguTweaks.SellValueDB[auction_record.item_id]
-					if vendor_price then 
-						local charges = 1
-						if info.max_item_charges(auction_record.item_id) ~= nil then 
-							info.charges=info.max_item_charges(auction_record.item_id) 
-						end
-						vendor_price= vendor_price/ charges 
-					 end
-				end
+                local vendor_price = info.vendor_sell_price(auction_record.item_id)
                 return auction_record.buyout_price > 0 and vendor_price and vendor_price * auction_record.aux_quantity - auction_record.buyout_price >= amount
             end
         end
@@ -370,25 +350,15 @@ function M.query(filter_string)
         return nil, suggestions or T.acquire(), error
     end
 
-    local polish_notation_counter = 0
-    for _, component in ipairs(filter.post) do
-        if component[1] == 'operator' then
-            polish_notation_counter = max(polish_notation_counter, 1)
-            polish_notation_counter = polish_notation_counter + (tonumber(component[2]) or 1) - 1
-        elseif component[1] == 'filter' then
-            polish_notation_counter = polish_notation_counter - 1
+    local depth = 0
+    for i = getn(filter.post), 1, -1 do
+        local component = filter.post[i]
+        if component[1] == 'filter' then depth = depth + 1
+        else
+            local n = component[3] or depth
+            if depth < n or n < 1 then return nil, T.acquire(), 'Malformed expression: missing operands' end
+            depth = depth - n + 1
         end
-    end
-
-    if polish_notation_counter > 0 then
-        local suggestions = T.acquire()
-        for key in filters do
-            tinsert(suggestions, strlower(key))
-        end
-        tinsert(suggestions, 'and')
-        tinsert(suggestions, 'or')
-        tinsert(suggestions, 'not')
-        return nil, suggestions, 'Malformed expression'
     end
 
     return {

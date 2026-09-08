@@ -57,6 +57,7 @@ local handlers = {
 
 local methods = {
     Update = function(self)
+        self.numRows = max(floor((self:GetParent():GetHeight() - HEAD_HEIGHT - HEAD_SPACE) / ROW_HEIGHT), 0)
 	    if getn(self.colInfo) > 1 or self.colInfo[1].name then
 		    self.headHeight = HEAD_HEIGHT
 	    else

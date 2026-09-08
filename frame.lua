@@ -23,7 +23,7 @@ do
 	frame:SetScript('OnHide', function() PlaySound('AuctionWindowClose'); CloseAuctionHouse() end)
 	frame.content = CreateFrame('Frame', nil, frame)
 	frame.content:SetPoint('TOPLEFT', 4, -80)
-	frame.content:SetPoint('BOTTOMRIGHT', -4, 35)
+	frame.content:SetPoint('BOTTOMRIGHT', -4, 43)
 	frame:Hide()
 	M.frame = frame
 end
@@ -34,7 +34,7 @@ do
 end
 do
 	local btn = gui.button(frame)
-	btn:SetPoint('BOTTOMRIGHT', -5, 5)
+	btn:SetPoint('BOTTOMRIGHT', -8, 15)
 	gui.set_size(btn, 60, 24)
 	btn:SetText('Close')
 	btn:SetScript('OnClick', function() frame:Hide() end)

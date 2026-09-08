@@ -66,6 +66,11 @@ function handle.LOAD()
         round_prices = false,
         remember_prices = false,
         min_profit_margin = 5,
+        auto_budget = 10000,
+        auto_max_lot = 1000,
+        auto_reserve = 10000,
+        auto_max_quantity = 20,
+        market_ttl = 300,
         autoprice = {},
         market_percentile = 0,
         items = {},
@@ -78,14 +83,21 @@ function handle.LOAD()
         local key = format('%s|%s', GetCVar'realmName', UnitName'player')
         EasyAH.character[key] = EasyAH.character[key] or {}
         M.character_data = assign(EasyAH.character[key], {
-            tooltip = {
-                value = true,
-                merchant_sell = false,
-                merchant_buy = false,
-                daily = false,
-                disenchant_value = false,
-                disenchant_distribution = false,
-            }
+            tooltip = {}
+        })
+        -- `assign` only fills in keys that are missing and it does not recurse,
+        -- so the tooltip defaults are seeded separately. Otherwise an option
+        -- added in a later version would stay nil for every character whose
+        -- saved variables already contain a `tooltip` table.
+        assign(character_data.tooltip, {
+            value = true,
+            daily = false,
+            disenchant_value = false,
+            disenchant_distribution = false,
+            merchant_sell = true,
+            merchant_buy = false,
+            merchant_stack = true,
+            merchant_unknown = false,
         })
     end
     do
@@ -104,6 +116,7 @@ function handle.LOAD2()
     EasyAH.faction[key] = EasyAH.faction[key] or {}
     M.faction_data = assign(EasyAH.faction[key], {
         history = {},
+        history_neutral = {},
         post = {},
     })
 end
@@ -171,51 +184,50 @@ M.hook = T.vararg-function(arg)
 	return hook
 end
 
-do
-	local locked
-	function M.bid_in_progress() return locked end
-	function M.place_bid(type, index, amount, on_success)
-		if locked then return end
-		local money = GetMoney()
-		PlaceAuctionBid(type, index, amount)
-		if money >= amount then
-			locked = true
-			local send_signal, signal_received = signal()
-			thread(when, signal_received, function()
-				do (on_success or pass)() end
-				locked = false
-			end)
-			thread(when, later(5), send_signal)
-			event_listener('CHAT_MSG_SYSTEM', function(kill)
-				if arg1 == ERR_AUCTION_BID_PLACED then
-					send_signal()
-					kill()
-				end
-			end)
-		end
-	end
-end
+local safety = require 'EasyAH.core.safety'
+function M.bid_in_progress() return safety.busy() end
+function M.cancel_in_progress() return safety.busy() end
 
-do
-	local locked
-	function M.cancel_in_progress() return locked end
-	function M.cancel_auction(index, on_success)
-		if locked then return end
-		locked = true
-		CancelAuction(index)
-		local send_signal, signal_received = signal()
-		thread(when, signal_received, function()
-			do (on_success or pass)() end
-			locked = false
-		end)
-		thread(when, later(5), send_signal)
-		event_listener('CHAT_MSG_SYSTEM', function(kill)
-			if arg1 == ERR_AUCTION_REMOVED then
-				send_signal()
-				kill()
-			end
-		end)
-	end
+function M.place_bid(query_type, index, amount, on_success, on_failure, auto_record)
+    local function fail(reason)
+        safety.log('bid', 'rejected', reason, amount)
+        if on_failure then thread(on_failure, reason) else print('Bid not sent:', reason) end
+        return false
+    end
+    if not safety.money(amount) or amount < 1 then return fail('invalid_price') end
+    if GetMoney() < amount then return fail('insufficient_money') end
+    if auto_record then
+        local ok, reason = safety.auto_check(auto_record, amount)
+        if not ok then return fail(reason) end
+        local current = require('EasyAH.util.info').auction(index, query_type)
+        if not current or current.search_signature ~= auto_record.search_signature then return fail('auction_changed') end
+    end
+    local id, reason = safety.begin('bid', ERR_AUCTION_BID_PLACED, function()
+        if auto_record then safety.reserve_auto(auto_record, amount) end
+        PlaceAuctionBid(query_type, index, amount)
+    end, function(result, detail)
+        if result == 'success' then
+            do (on_success or pass)() end
+        elseif on_failure then
+            on_failure(detail or result)
+        else
+            print('Bid not confirmed:', detail or result)
+        end
+    end, auto_record and auto_record.name or ('auction ' .. index), amount)
+    if not id then return fail(reason) end
+    return true
+end
+function M.cancel_auction(index, on_success, on_failure)
+    local id, reason = safety.begin('cancel', ERR_AUCTION_REMOVED, function() CancelAuction(index) end,
+        function(result, detail)
+            if result == 'success' then (on_success or pass)()
+            elseif on_failure then on_failure(detail or result)
+            else print('Cancel not confirmed:', detail or result) end
+        end, 'auction ' .. index)
+    if not id then
+        if on_failure then thread(on_failure, reason) else print('Cancel not sent:', reason) end
+    end
+    return id
 end
 
 function handle.LOAD2()
@@ -223,6 +235,7 @@ function handle.LOAD2()
 end
 
 function AUCTION_HOUSE_SHOW()
+    safety.open()
 	AuctionFrame:Hide()
 	frame:Show()
 	set_tab(1)
@@ -234,6 +247,7 @@ do
 		tinsert(handlers, f)
 	end
 	function AUCTION_HOUSE_CLOSED()
+        safety.close()
 		bids_loaded = false
 		current_owner_page = nil
 		for _, handler in handlers do
@@ -273,4 +287,11 @@ AuctionFrameAuctions_OnEvent = T.vararg-function(arg)
     if AuctionFrameAuctions:IsVisible() then
 	    return orig.AuctionFrameAuctions_OnEvent(unpack(arg))
     end
+end
+
+function M.stop_all()
+    require('EasyAH.tabs.post').stop_all()
+    require('EasyAH.core.scan').abort()
+    safety.cancel('Stopped by user')
+    safety.disarm()
 end

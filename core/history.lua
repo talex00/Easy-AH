@@ -8,29 +8,55 @@ local persistence = require 'EasyAH.util.persistence'
 local history_schema = {'tuple', '#', {next_push='number'}, {daily_min_buyout='number'}, {data_points={'list', ';', {'tuple', '@', {value='number'}, {time='number'}}}}}
 
 local value_cache = {}
-local samples = {}
+local markets = {faction={}, neutral={}}
+local context = 'faction'
+local serial = 0
 
--- session_market holds the CURRENT market floor per item, taken from this
--- session's scans and kept ONLY in memory (never saved to disk). This is what
--- auto-price undercuts. Before an item is scanned this session there is no
--- value (nil), so the algorithm falls back to the historical value instead of
--- a stale cached number. Each scan bumps scan_generation; the first sighting
--- of an item in a scan resets its floor, later sightings keep the minimum.
-local session_market = {}
--- Number of distinct competing auctions (excluding our own) that the current
--- market floor is based on. A floor built from only 1-2 asking lots is not a
--- reliable price signal (those sellers may just be guessing) -- auto-price
--- uses this to require a minimum sample before trusting the market floor.
-local session_market_count = {}
-local scan_generation = 0
-local item_generation = {}
-
-function M.begin_scan()
-	scan_generation = scan_generation + 1
+function M.select_market(neutral)
+    context = neutral and 'neutral' or 'faction'
+    if EasyAH.faction_data then
+        data = neutral and EasyAH.faction_data.history_neutral or EasyAH.faction_data.history
+    end
+    value_cache = {}
 end
+function M.context() return context end
+function EasyAH.handle.LOAD2() select_market(false) end
 
-function EasyAH.handle.LOAD2()
-	data = EasyAH.faction_data.history
+-- A snapshot is private to ONE complete exact-item scan. Empty is a valid
+-- completed result; incomplete/aborted scans are never published.
+function M.new_snapshot(keys)
+    serial = serial + 1
+    local s = {id=serial, context=context, items={}, started=GetTime()}
+    for _, key in ipairs(keys or {}) do
+        s.items[key] = {samples={}, count=0, sellers={}, owner_complete=true}
+    end
+    return s
+end
+function M.observe(s, ar)
+    local v = s.items[ar.item_key]
+    if not v or ar.buyout_price <= 0 then return end
+    if not ar.owner then v.owner_complete = false; return end
+    if require('EasyAH.util.info').is_player(ar.owner) then return end
+    v.count = v.count + 1
+    v.sellers[ar.owner] = true
+    tinsert(v.samples, {value=ar.unit_buyout_price, weight=ar.aux_quantity})
+end
+function M.commit(s)
+    if s.context ~= context then return false end
+    for _, v in s.items do if not v.owner_complete then return false end end
+    for key, v in s.items do
+        local pct = tonumber(EasyAH.account_data.market_percentile) or 0
+        pct = max(0, min(100, pct))
+        v.value = weighted_percentile(v.samples, pct / 100)
+        v.time, v.id, v.complete = GetTime(), s.id, true
+        v.seller_count = EasyAH.size(v.sellers)
+        v.samples = nil
+        markets[context][key] = v
+    end
+    return true
+end
+function M.invalidate(item_key)
+    markets[context][item_key] = nil
 end
 
 do
@@ -50,7 +76,12 @@ function new_record()
 end
 
 function read_record(item_key)
-	local record = data[item_key] and persistence.read(history_schema, data[item_key]) or new_record()
+	local record
+    if data[item_key] then
+        local ok, result = pcall(persistence.read, history_schema, data[item_key])
+        if ok and type(result) == 'table' and type(result.next_push) == 'number' and type(result.data_points) == 'table' then record = result end
+    end
+    record = record or new_record()
 	if record.next_push <= time() then
 		push_record(record)
 		write_record(item_key, record)
@@ -66,35 +97,14 @@ function write_record(item_key, record)
 	end
 end
 
-function M.process_auction(auction_record)
-	local unit_buyout_price = ceil(auction_record.buyout_price / auction_record.aux_quantity)
-	if unit_buyout_price <= 0 then return end
-	local key = auction_record.item_key
-
-	-- 1) Live market floor for pricing (in-memory, rebuilt fresh each scan).
-	local fresh = item_generation[key] ~= scan_generation
-	item_generation[key] = scan_generation
-	local pct = EasyAH.account_data.market_percentile
-	if pct and pct > 0 then
-		if fresh and samples[key] then
-			T.release(samples[key])
-			samples[key] = nil
-		end
-		samples[key] = samples[key] or T.acquire()
-		tinsert(samples[key], T.map('value', unit_buyout_price, 'weight', auction_record.aux_quantity or 1))
-		local robust = weighted_percentile(samples[key], pct / 100)
-		if robust then session_market[key] = robust end
-	elseif fresh or unit_buyout_price < (session_market[key] or EasyAH.huge) then
-		session_market[key] = unit_buyout_price
-	end
-
-	-- 2) Persisted daily low, used ONLY to build the long-term historical value
-	--    (data_points) at day rollover. Never used directly for live pricing.
-	local item_record = read_record(key)
-	if unit_buyout_price < (item_record.daily_min_buyout or EasyAH.huge) then
-		item_record.daily_min_buyout = unit_buyout_price
-		write_record(key, item_record)
-	end
+function M.process_auction(ar)
+    if not ar.aux_quantity or ar.aux_quantity <= 0 or not ar.buyout_price or ar.buyout_price <= 0 then return end
+    local price = ar.buyout_price / ar.aux_quantity
+    local record = read_record(ar.item_key)
+    if price < (record.daily_min_buyout or EasyAH.huge) then
+        record.daily_min_buyout = price
+        write_record(ar.item_key, record)
+    end
 end
 
 function M.data_points(item_key)
@@ -124,27 +134,21 @@ function M.value(item_key)
 	return value_cache[item_key].value
 end
 
--- The live market floor from this session's scans (in-memory only). Returns
--- nil if the item has not been scanned yet this session.
+function M.market_status(item_key)
+    local v = markets[context][item_key]
+    if not v then return nil, 'not_scanned' end
+    if GetTime() - v.time > (EasyAH.account_data.market_ttl or 300) then return nil, 'stale' end
+    return v
+end
 function M.market_value(item_key)
-	return session_market[item_key]
+    local v = market_status(item_key)
+    return v and v.value
 end
-
--- How many competing auctions (excluding our own) the current market floor is
--- based on. Returns 0 if the item has not been scanned yet this session.
 function M.market_count(item_key)
-	return session_market_count[item_key] or 0
+    local v = market_status(item_key)
+    return v and v.count or 0
 end
-
--- Set the live market floor directly (from a completed scan's visible lots,
--- excluding our own auctions), along with how many competing auctions were
--- seen. In-memory only, never persisted.
-function M.set_market_value(item_key, value, count)
-	if value and value > 0 then
-		session_market[item_key] = value
-		session_market_count[item_key] = count or 0
-	end
-end
+function M.daily_value(item_key) return read_record(item_key).daily_min_buyout end
 
 function weighted_median(list)
 	sort(list, function(a,b) return a.value < b.value end)
@@ -164,7 +168,7 @@ function weighted_percentile(list, p)
 	if total == 0 then return end
 	local threshold = total * p
 	local cum = 0
-	for _, v in list do
+	for _, v in ipairs(list) do
 		cum = cum + v.weight
 		if cum >= threshold then return v.value end
 	end

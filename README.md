@@ -1,156 +1,66 @@
-# aux - WoW 1.12 AddOn
+# EasyAH — WoW 1.12.1 / fix5
 
-The most advanced auction house addOn for the 1.12 client with some features more advanced than anything even on retail.
+Только оригинальный WoW 1.12.1, Interface 11200. Не современный Classic / Retail.
 
-## Core Features
+## Что исправлено в fix3
 
-### General
-* Completely independent replacement for the Blizzard interface.
-* Elegant look based on the retail addOn TSM.
-* Many convenient shortcuts.
-* Convenient access to the unaltered Blizzard interface.
+В fix2 размер стака сохранялся, но очередь Post All продолжала брать максимальный размер. В fix3 построитель очереди действительно использует настройку предмета. Добавлены проверки размеров лотов непосредственно при отправке на размещение.
 
-### Search
-* Automatic scanning of all pages for a query.
-* Saving of recent and favorite queries.
-* History of result listings with internet browser-like interface.
-* Advanced search filters which can be combined with logical operators.
-* Autocompletion for entering filters.
-* Concise listings cleary showing the most important information.
-* Sorting by percentage of historical value and unit price.
-* Sorting across all scanned pages.
-* Quick buying from any page without rescanning everything.
-* Real time mode which continuously scans the last page.
+Переработана вкладка Post: увеличена панель, цены/количество/длительность/упаковка разнесены. Поле больше не размещается поверх Duration. Hide this item перенесено вниз списка предметов, Stop — вниз рядом с Post All. Длинное название предмета ограничено своей строкой. Размер окна Post подстраивается под доступную область экрана.
 
-### Post
-* Automatic assembling and posting of multiple stacks.
-* Automatic scanning of existing auctions.
-* Concise listing of existing auctions.
-* Undercutting of existing auctions by click.
-* Concise listing of inventory items excluding the non auctionable.
-* Manual exclusion of specific items from the inventory listing.
-* Saving post configuration per item.
-* Efficient price input inspired by the retail addOn TSM.
+## Цена продажи вендору для всех предметов (fix5)
 
-### History
-* Automatic gathering of historical data from all scans.
-* Automatic collection of vendor prices.
-* Intricate calculations for a reliable historical value.
-* Tooltip with historical value, vendor prices and disenchant value.
-* Efficient storage of data.
+Клиент 1.12.1 не сообщает аддонам цену продажи предмета торговцу. Раньше EasyAH показывал её только для предметов, которые вы уже показывали вендору. Теперь в аддон встроена база цен ваниллы на ~13,8 тысячи предметов (`data/vendor_prices.lua`), поэтому цена в тултипе видна сразу, даже для совсем новых предметов.
 
-## Slash Commands
-### General
-**/aux** (Lists the settings)<br/>
-**/aux scale _factor_** (Scales the aux GUI by _factor_)<br/>
-**/aux ignore owner** (Disables waiting for owner names when scanning. Recommended)<br/>
-**/aux post bid** (Adds a bid price listing to the post tab)<br/>
-**/aux crafting cost** (Toggles the crafting price information)<br/>
-**/aux post duration _hours_** (Sets the default auction duration to _2_/_8_/_24_ hours)<br/>
-### Tooltip
-**/aux tooltip value**<br/>
-**/aux tooltip daily**<br/>
-**/aux tooltip disenchant value**<br/>
-**/aux tooltip disenchant distribution**<br/>
-**/aux tooltip vendor buy**<br/>
-**/aux tooltip vendor sell**<br/>
+Приоритет: сначала ваша наблюдённая цена (скан торговца), затем база ShaguTweaks (если установлен), затем встроенная база. Серверные нестандартные цены по-прежнему побеждают базу после первого визита к торговцу.
 
-## Usage
-### General
-For the auction listings in the search, auctions and bids tabs the following shortcuts are available.
-- Double-click on a row with blue colored count to expand it.
-- Alt-left-click on the selected row for buyout/cancel.
-- Alt-right-click on the selected row for bid/cancel.
-- Right-click on a row to start a search for the auctioned item.
-- Control-click on a row the show a preview in the wardrobe frame.
-- Shift-click on a row to copy the link to the chatframe.
-- Left-click on a header to sort.
-- Right-click on a header of a price column to switch between unit and stack price.
+## Как настроить размер стака
 
-Furthermore
-- Double-click in editboxes will highlight everything.
+Выберите предмет слева во вкладке Post. В отдельной секции **Post All packaging**:
 
-### Search
-- Hitting tab in the search box will accept an autocompletion.
-- Dragging inventory items to the search box or right-clicking them will start a search.
-- Right-clicking item links will start a search.
+- **Max** — максимальные стаки. Это поведение по умолчанию; ничего настраивать не требуется.
+- **Single** — по одному предмету.
+- **Custom** — целое количество от 1 до максимума предмета, затем **Save**.
 
-#### Search Results
-![Alt text](http://i.imgur.com/hI6ODqM.png)
-- Bid prices for your own active bids are colored in green.
-- Bid prices for other auctions with an active bid are colored in orange.
+Корректное значение также сохраняется при вводе/выходе из поля и проверяется перед запуском Post All. Строка **Saved: ...** подтверждает настройку. Звёздочка отмечает активный режим.
 
-#### Saved Searches
-![Alt text](http://i.imgur.com/dICDnxR.png)
-- When hovering over an entry the tooltip shows a longer and more nicely formatted version.
-- Left-click on an entry will start a search.
-- Right-click on an entry will show a menu with various options, including toggling Auto Buy.
-- Shift-left-click on an entry will copy a search to the search box.
-- Shift-right-click on an entry will add a search to the existing query in the search box.
+Правило сохраняется отдельно для каждого item_key в профиле фракции/сервера, как и старые настройки цены. Оно относится к Post All, а не к ползунку одиночного Post.
 
-#### Filter Builder
-![Alt text](http://i.imgur.com/8hilZc9.png)
-While it is faster to type filters directly into the search box this sub-tab serves as a tutorial to learn how to formulate queries.
-The filters on the left side are Blizzard filters which may reduce the number of pages to be scanned and those on the right side are post filters which do not affect the scan time but can be combined with logical operators to formulate very complex filters.
-### Post
-![Alt text](http://i.imgur.com/otzOT2I.png)
-- When entering prices **g**, **s** and **c** denote gold, silver and copper respectively.
-- A price value without explicit denotations will count as gold. (e.g., 10.5 = 10g50s)
-- Price values can contain decimals. (e.g., 1.5g = 1g50s)
-- Right-clicking an item in the inventory listing will start a search.
-- Right-clicking a bag item will select it in the listing.
-- In the listing of bids/buyouts a red price is undercutting stack/unit price.
-- Clicking an entry in the in the listings of bids/buyouts of existing auctions will undercut with your bid stack/buyout unit price.
-- Double-click in the bids/buyouts listings will also match the stack size.
+Примеры:
+- Ткань Max → по 20, дорогая трава Single → по 1.
+- Custom=5 и 12 предметов → 5 + 5 + 2.
+- Max и 23 предмета при максимуме 20 → 20 + 3.
 
-### Auctions
-![Alt text](http://i.imgur.com/6HjaIo2.png)
+Остаток выставляется отдельным лотом, не теряется. Зарядовые предметы остаются целыми: заряды не являются разделяемым стаком. Старые сохранения без настройки означают Max; завышенные значения ограничиваются максимумом.
 
-### Bids
-![Alt text](http://i.imgur.com/NOjPKNW.png)
+## Plan / Log / Classic
 
-## Search Filters
-AddOns do not have any additional Blizzard filters available to them beyond the ones in the default auction house interface, nor do they have any other ways to combine them.
-Of course it is possible for an addOn to apply arbitrary filters after the Blizzard query but only the Blizzard query will affect the number of pages to be scanned and thus the time it takes for a scan.
-Since the Vanilla API will only let you request a page every 4 seconds having no Blizzard query in your filter can lead to very long scan times.
+Вверху панели предмета находятся отдельные кнопки:
 
-aux queries are separated by semicolons and always contain exactly one Blizzard query. The Blizzard query may be empty, i.e., all pages are scanned, which can be useful for collecting historical data.
-The real time mode only supports empty Blizzard queries.
-Semicolons always mean "or", i.e., **q1;q2;q3** means all items matching **q1** or **q2** or **q3** will be listed.
+- **Plan** — окно подробностей Post All. При готовности плана открывается автоматически, но размещение требует отдельного подтверждения. Команда /eah plan остаётся необязательным сокращением.
+- **Log** — журнал операций, новые записи сверху. В окне есть Refresh и Close; Esc также закрывает окно. Команда /eah log сохранена для совместимости.
+- **Classic: Off/On** — переключение оформления без reload. Классическая тема использует текстуры окон и кнопок из клиента WoW, золотые подписи и стандартный шрифт клиента. Современная тема остаётся доступна. Выбор сохраняется для аккаунта. В заголовке настроек также есть переключатель темы.
 
-The parts of individual queries are separated by slashes, e.g., **q1p1/q1p2;q2p1/q2p2/q2p3**. All parts either belong to the Blizzard filter or the post processing filter.
+## Установка
 
-Blizzard filters can be created through the form on the left side of the "New Filter" sub-tab of the "Search" tab or typed directly into the search box.
-For learning to write queries you can fill in the form, add the query to the search box with the "Add" or "Replace" buttons and inspect the generated output until you feel comfortable typing them out yourself.
-For the most part it should be rather intuitive.
-The first part is special in that if it doesn't match any specific filter keyword it will be treated as a Blizzard name search. E.g., a query consisting only of **felcloth** would list the items Felcloth, Pattern: Felcloth Hood, Felcloth Bag etc.
-Usually you would want to use the **exact** modifier which only matches auctions where the name, apart from case, exactly equals the first part of the query.
-**exact** is the only modifier which is part Blizzard and part post filter, though it is mostly treated as a Blizzard filter. **exact** will tailor the Blizzard query as well as possible towards the item searched (level range, item class/subclass/slot, quality ...) and it cannot be used together with Blizzard filters for these properties.
+1. Полностью выйдите из игры.
+2. Сохраните резервные копии Interface/AddOns/EasyAH и WTF/Account/<ACCOUNT>/SavedVariables/EasyAH.lua, а также .bak, если есть.
+3. Полностью замените папку EasyAH папкой из архива. Итог: Interface/AddOns/EasyAH/EasyAH.toc. Не создавайте дополнительную вложенную папку EasyAH.
+4. Не удаляйте SavedVariables: история и настройки совместимы.
+5. Первую проверку проведите на дешёвом предмете.
 
-Post processing filters are more flexible.
-They are specified using the filter primitives you find on the right side of the "New Filter" sub-tab and can be combined with **and**, **or** and **not** using polish notation (https://en.wikipedia.org/wiki/Polish_notation).
-Filter parts other than the first which don't match any specific filter, just like the first part is treated as a Blizzard name filter, are treated as a tooltip filter.
-For using a tooltip filter as the first filter part there is an explicit **tooltip** modifier.
+## Сохранённые меры безопасности fix1
 
-Here are some queries I use myself for illustration:
+Post All не отправляет лоты до подтверждения, цены фиксируются. Stop останавливает последующие действия, но не откатывает уже отправленное серверу действие. После ошибки/таймаута проверьте реальное состояние лота, сумок и золота, подождите 15 секунд и заново откройте аукцион. Не повторяйте неизвестный результат вслепую.
 
-**or/and2/profit/5g/percent/60/and3/bid-profit/5g/bid-percent/60/left/30m**<br/>
-This filter will search the whole auction house for auctions either with a buyout price of 5g or more below market value and 60% or less of the market value or a bid price for which the same is true and in addition only 30m or less remaining.
+Автопокупка/автоставки по умолчанию выключены. /eah auto on разрешает их для текущего посещения аукциона, если включены соответствующие сохранённые фильтры. Лимиты по умолчанию: бюджет 1g, максимум лота 10s, запас 1g, 20 единиц item_key (заряды учитываются как единицы). Счётчики расхода не сбрасываются при новом посещении, но сбрасываются при reload/входе. Изменение лимита выключает разрешение.
 
-**wrangler's wristbands/exact/or2/and2/+3 agility/+3 stamina/+5 stamina/price/1g**<br/>
-This will search for wrangler's wristband with 3/3 monkey or 5 stam suffixes for at most 1g buyout price.
+Команды: /eah — настройки; /eah stop — остановка; /eah auto — статус; /eah auto budget 5g; /eah auto lot 50s; /eah auto reserve 1g; /eah auto quantity 40; /eah auto on или off.
 
-**recipe/usable/not/libram**<br/>
-This will scan for usable recipes and exclude those with "libram" in the tooltip (i.e., librams)
+## Проверки и ограничения
 
-**armor/cloth/50/intellect/stamina**<br/>
-This will scan the auction house for cloth armor which has a requirement of at least lvl 50 as well both intellect and stamina stats.
+47 тестов: 35 прежних и 12 новых, включая реальный код очереди, сборки стаков и размещения с моделью сумок/курсора/продажного слота. Проверяется размер предмета в StartAuction, а не только появление диалога.
 
-## Historical Value
+Использован Lua 5.3 с тестовой адаптацией старых конструкций в памяти. Нативный клиент WoW 1.12.1 / Lua 5.0 не запускался. Проверка координатной модели панели обеих тем не заменяет игровую проверку шрифтов, текстур и масштаба. Не заявляется тестирование на вашем сервере.
 
-aux condenses the prices you've scanned during a day (midnight to midnight) into a single value, similarly to retail Auctioneer's "stat-simple" module.
-This daily value is calculated as the minimum buyout of the day which in practice gives a similar enough value to that of retail TSM while using much less memory.
-Limiting the memory usage is important because like Auctioneer and unlike TSM aux is using a day based instead of scan based interval and thus has to store the daily progress in the savedvariables.
-Finally these daily values are collected in a list of the last 11 of them from which the market value is taken as the median. The values are weighted by their age but it doesn't have a large effect unless they're older than a month.
-
-The bottom line is that you get a fairly accurate market value for both very active markets as well as rarer items that has a reasonably short reaction time to market changes, recovers easily and never needs to be reset while still being reasonably stable and hard to manipulate and dealing with outliers very well, not getting distorted by multiple scans per day, not needing a single full scan per day but instead naturally picking up every price you scan while going about your usual business, letting you focus on a certain part of the auction house by scanning only that part regularly and avoiding information overload by giving you a single concise value for the tooltip.
+Подробности: TESTING.md и tests/results.txt. README_previous_versions.md и CHANGELOG_fix1.md — историческая документация; при расхождениях актуален этот файл.

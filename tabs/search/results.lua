@@ -272,6 +272,7 @@ function start_search(queries, continuation)
 end
 
 function M.execute(resume, real_time)
+    if require('EasyAH.core.post').busy() or require('EasyAH.core.safety').busy() or require('EasyAH.tabs.post').batch_busy() then EasyAH.print('Stop the current operation first.'); return end
 
 	if resume then
 		real_time = current_search().real_time
@@ -373,7 +374,7 @@ do
 				if not record.high_bidder then
 					bid_button:SetScript('OnClick', function()
 						if scan_util.test(record, index) and search.table:ContainsRecord(record) then
-							EasyAH.place_bid('list', index, record.bid_price, record.bid_price < record.buyout_price and function()
+							EasyAH.place_bid('list', index, record.bid_price, (record.buyout_price == 0 or record.bid_price < record.buyout_price) and function()
 								info.bid_update(record)
 								search.table:SetDatabase()
 							end or function() search.table:RemoveAuctionRecord(record) end)

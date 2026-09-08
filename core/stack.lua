@@ -3,6 +3,7 @@ module 'EasyAH.core.stack'
 local T = require 'T'
 local EasyAH = require 'EasyAH'
 local info = require 'EasyAH.util.info'
+local safety = require 'EasyAH.core.safety'
 
 local state
 
@@ -60,6 +61,8 @@ function find_charge_item_slot()
 end
 
 function move_item(from_slot, to_slot, amount, k)
+    if CursorHasItem() then return stop('cursor_busy') end
+    if not max_stack(from_slot) then return stop('inventory_changed') end
 	if locked(from_slot) or locked(to_slot) then
 		return EasyAH.wait(k)
 	end
@@ -71,19 +74,29 @@ function move_item(from_slot, to_slot, amount, k)
 	SplitContainerItem(from_slot[1], from_slot[2], amount)
 	PickupContainerItem(unpack(to_slot))
 
-	return EasyAH.when(function() return stack_size(to_slot) == expected_size end, k)
+	local s = state
+    local deadline = EasyAH.later(8)
+    return EasyAH.when(function() return state ~= s or deadline() or stack_size(to_slot) == expected_size end, function()
+        if state ~= s then return end
+        if deadline() then return stop('timeout') end
+        if CursorHasItem() then ClearCursor(); return stop('move_failed') end
+        return k()
+    end)
 end
 
 function process()
+    if not state then return end
+    if not safety.is_open() then return stop('cancelled') end
+    if GetTime() - state.started > 20 then return stop('timeout') end
 	if not state.target_slot or not matching_item(state.target_slot) then
 		state.target_slot = find_item_slot()
 		if not state.target_slot then
-			return stop()
+			return complete()
 		end
 	end
 	if charges(state.target_slot) then
 		state.target_slot = find_charge_item_slot()
-		return stop()
+		return complete()
 	end
 	if stack_size(state.target_slot) > state.target_size then
 		local slot = find_item_slot(true) or find_empty_slot()
@@ -106,25 +119,30 @@ function process()
 			)
 		end
 	end
-	return stop()
+	return complete()
 end
 
-function M.stop()
-	if state then
-		EasyAH.kill_thread(state.thread_id)
-		local callback, slot = state.callback, state.target_slot
-		slot = slot and matching_item(slot) and slot or nil
-		state = nil
-		do (callback or pass)(slot) end
-	end
+local function finish(slot, result)
+    local s = state
+    if not s then return end
+    state = nil
+    EasyAH.kill_thread(s.thread_id)
+    if s.callback then EasyAH.thread(s.callback, slot, result) end
 end
-
-function M.start(item_key, size, callback)
-	stop()
-	state = {
-		thread_id = EasyAH.thread(process),
-		item_key = item_key,
-		target_size = size,
-		callback = callback,
-	}
+function complete()
+    local slot = state and state.target_slot
+    if slot and matching_item(slot) and (charges(slot) or stack_size(slot)) == state.target_size then
+        return finish(slot, 'success')
+    end
+    return finish(nil, 'failed')
+end
+function M.stop(reason) finish(nil, reason or 'cancelled') end
+function M.start(key, size, callback)
+    if state or CursorHasItem() then
+        if callback then EasyAH.thread(callback, nil, 'busy') end
+        return false
+    end
+    state = {item_key=key, target_size=size, callback=callback, started=GetTime()}
+    state.thread_id = EasyAH.thread(process)
+    return true
 end

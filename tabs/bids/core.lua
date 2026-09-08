@@ -78,7 +78,7 @@ do
                 if not record.high_bidder then
                     bid_button:SetScript('OnClick', function()
                         if scan_util.test(record, index) and listing:ContainsRecord(record) then
-                            EasyAH.place_bid('bidder', index, record.bid_price, record.bid_price < record.buyout_price and function()
+                            EasyAH.place_bid('bidder', index, record.bid_price, (record.buyout_price == 0 or record.bid_price < record.buyout_price) and function()
                                 info.bid_update(record)
                                 listing:SetDatabase()
                             end or function() listing:RemoveAuctionRecord(record) end)

@@ -146,7 +146,7 @@ do
     local frame = CreateFrame('Frame', nil, frame)
     frame:SetWidth(265)
     frame:SetHeight(25)
-    frame:SetPoint('TOPLEFT', EasyAH.frame.content, 'BOTTOMLEFT', 0, -6)
+    frame:SetPoint('TOPLEFT', EasyAH.frame.content, 'BOTTOMLEFT', 8, -6)
     status_bar_frame = frame
 end
 do
