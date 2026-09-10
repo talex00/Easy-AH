@@ -270,10 +270,13 @@ do
 			if not self[str] and (str == 'usable' or str == 'exact' and self.name and EasyAH.size(self) == 1) then
 				self[str] = T.list(str, 1)
 				return T.list('blizzard', str, str, 1)
-			elseif i == 1 and strlen(str) <= 63 then
-				self.name = unquote(str)
-				return T.list('blizzard', 'name', unquote(str), str)
---				return nil, 'The name filter must not be longer than 63 characters' TODO
+			elseif i == 1 then
+				local name = unquote(str)
+				if strlen(str) > 63 and EasyAH.character_count(name) > 63 then
+					return nil, 'The name filter must not be longer than 63 characters'
+				end
+				self.name = name
+				return T.list('blizzard', 'name', name, str)
 			end
 		end,
 	}
@@ -327,9 +330,11 @@ function M.parse_filter_string(str)
             end
             tinsert(filter, post_filter[getn(post_filter)])
         else
-	        local part = blizzard_filter_parser(parts[i], i)
+	        local part, error = blizzard_filter_parser(parts[i], i)
 	        if part then
 		        tinsert(filter, part)
+	        elseif error then
+		        return nil, error
 	        elseif parts[i] ~= '' then
 		        tinsert(post_filter, T.list('filter', 'tooltip', parts[i]))
 		        tinsert(filter, post_filter[getn(post_filter)])

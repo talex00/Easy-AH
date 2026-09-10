@@ -168,6 +168,11 @@ function M.bounded(lower_bound, upper_bound, number)
 	return max(lower_bound, min(upper_bound, number))
 end
 
+function M.character_count(str)
+	local _, count = gsub(str or '', '[^\128-\191]', '')
+	return count
+end
+
 function M.round(x)
 	return floor(x + .5)
 end
